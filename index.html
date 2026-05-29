@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Scroll-Scrub Video Test</title>
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: #050505;          /* fills the letterbox bars around the video */
+    color: #e7e7e7;
+  }
+  body {
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+
+  /* HERO — full screen, video only. 100svh is stable on mobile Safari. */
+  #hero {
+    position: relative;
+    width: 100%;
+    height: 100vh;
+    height: 100svh;
+    overflow: hidden;
+    background: #050505;
+  }
+  #hero video {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;   /* FIT TO WIDTH: show the whole frame, no cropping.
+                              On a phone this fills the width and letterboxes
+                              top/bottom. (Change to "cover" to fill & crop.) */
+    display: block;
+    background: #050505;
+    pointer-events: none;
+    will-change: transform;
+  }
+
+  /* Optional wordless scroll cue (outside the hero). Delete freely. */
+  #scroll-cue {
+    position: fixed;
+    left: 50%;
+    bottom: max(22px, env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    width: 1px; height: 46px;
+    z-index: 5; overflow: hidden;
+    background: rgba(255,255,255,0.14);
+    transition: opacity .6s ease;
+    pointer-events: none;
+  }
+  #scroll-cue::after {
+    content: "";
+    position: absolute; left: 0; top: -50%;
+    width: 100%; height: 50%;
+    background: linear-gradient(to bottom, transparent, rgba(255,255,255,0.95));
+    animation: cueRun 2.4s cubic-bezier(.7,0,.3,1) infinite;
+  }
+  @keyframes cueRun {
+    0% { transform: translateY(-100%); }
+    60%,100% { transform: translateY(300%); }
+  }
+  #scroll-cue.is-hidden { opacity: 0; }
+  @media (prefers-reduced-motion: reduce) { #scroll-cue::after { animation: none; } }
+
+  /* Plain spacer to confirm the page releases after the pin. */
+  #spacer {
+    min-height: 100vh;
+    min-height: 100svh;
+    background: #101012;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #spacer .marker {
+    font: 500 12px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    letter-spacing: .28em; text-transform: uppercase;
+    color: rgba(255,255,255,0.32);
+    border-top: 1px solid rgba(255,255,255,0.12);
+    padding-top: 14px;
+  }
+</style>
+</head>
+
+<body>
+
+  <!-- HERO — video only -->
+  <section id="hero">
+    <video
+      id="heroVideo"
+      playsinline
+      webkit-playsinline
+      x5-playsinline
+      muted
+      preload="auto"
+      disablepictureinpicture
+      disableremoteplayback>
+
+      <!-- VIDEO FILE: put timelapse.mp4 in the SAME folder as this HTML
+           (repo root, no subfolder). Rename your clip to exactly this. -->
+      <source src="timelapse.mp4" type="video/mp4">
+    </video>
+  </section>
+
+  <div id="scroll-cue" aria-hidden="true"></div>
+
+  <!-- SPACER -->
+  <section id="spacer">
+    <div class="marker">scroll released</div>
+  </section>
+
+  <!-- Libraries -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+  <script src="https://unpkg.com/lenis@1.1.14/dist/lenis.min.js"></script>
+
+  <script>
+  (function () {
+    "use strict";
+
+    var SCROLL_DISTANCE = "+=400%";   // 400vh of scroll = frame 0 -> last frame
+    var SCRUB_SMOOTH    = 1;          // scrub smoothing (sec); 0.5-1.5 feels luxe
+
+    var video = document.getElementById("heroVideo");
+    var hero  = document.getElementById("hero");
+    var cue   = document.getElementById("scroll-cue");
+
+    gsap.registerPlugin(ScrollTrigger);
+
+    // Never auto-play. We only move currentTime.
+    video.muted = true;
+    video.removeAttribute("autoplay");
+    video.pause();
+
+    // Smooth scroll: Lenis on desktop, native scroll on touch/iOS (most reliable for scrub).
+    var ua = navigator.userAgent;
+    var isTouch = ("ontouchstart" in window) ||
+                  (window.matchMedia && matchMedia("(hover: none) and (pointer: coarse)").matches);
+    var isIOS = /iP(hone|od|ad)/.test(ua) ||
+                (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    var useLenis = !isTouch && !isIOS && (typeof Lenis !== "undefined");
+
+    if (useLenis) {
+      var lenis = new Lenis({
+        duration: 1.1,
+        easing: function (t) { return Math.min(1, 1.001 - Math.pow(2, -10 * t)); },
+        smoothWheel: true
+      });
+      lenis.on("scroll", ScrollTrigger.update);
+      gsap.ticker.add(function (time) { lenis.raf(time * 1000); });
+      gsap.ticker.lagSmoothing(0);
+    }
+
+    // iOS unlock: a media element won't seek until a user gesture primes it.
+    var primed = false;
+    function primeVideo() {
+      if (primed) return; primed = true;
+      try {
+        var p = video.play();
+        if (p && typeof p.then === "function") p.then(function(){ video.pause(); }).catch(function(){});
+        else video.pause();
+      } catch (e) {}
+    }
+    ["touchstart", "pointerdown", "click"].forEach(function (ev) {
+      window.addEventListener(ev, primeVideo, { once: true, passive: true });
+    });
+
+    // Build the scrub once duration is known.
+    var built = false;
+    function buildScrub() {
+      if (built) return;
+      var dur = (video.duration && isFinite(video.duration)) ? video.duration : 10;
+      if (!dur) return;
+      built = true;
+
+      var proxy = { t: 0 };
+      gsap.to(proxy, {
+        t: dur, ease: "none",
+        scrollTrigger: {
+          trigger: hero,
+          start: "top top",
+          end: SCROLL_DISTANCE,
+          pin: true,
+          pinSpacing: true,
+          anticipatePin: 1,
+          scrub: SCRUB_SMOOTH,
+          invalidateOnRefresh: true,
+          onUpdate: function (self) {
+            if (cue && self.progress > 0.01) cue.classList.add("is-hidden");
+          }
+        },
+        onUpdate: function () {
+          if (video.readyState >= 1) {
+            var target = Math.min(proxy.t, dur - 0.001);
+            if (Math.abs(video.currentTime - target) > 0.001) video.currentTime = target;
+          }
+        }
+      });
+      ScrollTrigger.refresh();
+    }
+
+    if (video.readyState >= 1 && isFinite(video.duration)) buildScrub();
+    else {
+      video.addEventListener("loadedmetadata", buildScrub, { once: true });
+      video.addEventListener("canplay", buildScrub, { once: true });
+      setTimeout(buildScrub, 2500);
+    }
+
+    // Refresh only on width/orientation changes (ignore iOS toolbar height changes).
+    var lastW = window.innerWidth;
+    window.addEventListener("resize", function () {
+      if (window.innerWidth !== lastW) { lastW = window.innerWidth; ScrollTrigger.refresh(); }
+    });
+    window.addEventListener("orientationchange", function () {
+      setTimeout(function () { ScrollTrigger.refresh(); }, 300);
+    });
+
+    window.addEventListener("scroll", function onScroll() {
+      if (window.scrollY > 8 && cue) {
+        cue.classList.add("is-hidden");
+        window.removeEventListener("scroll", onScroll);
+      }
+    }, { passive: true });
+
+  })();
+  </script>
+
+  <!-- ================================================================
+       FALLBACK (commented): IMAGE-SEQUENCE SCRUB
+       If currentTime seeking ever misbehaves on a device, swap to frames.
+       1) ffmpeg -i timelapse.mp4 -q:v 3 frames/%04d.jpg   (241 frames)
+       2) Replace the <video> with <canvas id="seq"></canvas>
+       3) Use this in place of the video JS:
+
+       <script>
+       (function () {
+         gsap.registerPlugin(ScrollTrigger);
+         var FRAME_COUNT = 241;
+         var PATH = function (i){ return "frames/" + String(i).padStart(4,"0") + ".jpg"; };
+         var canvas = document.getElementById("seq"), ctx = canvas.getContext("2d");
+         var images = [], state = { frame: 0 }, loaded = 0;
+         function fit(){ var d=devicePixelRatio||1; canvas.width=canvas.clientWidth*d;
+           canvas.height=canvas.clientHeight*d; ctx.setTransform(d,0,0,d,0,0); render(); }
+         function render(){ var img=images[Math.round(state.frame)]; if(!img||!img.complete) return;
+           var cw=canvas.clientWidth, ch=canvas.clientHeight, s=Math.min(cw/img.width, ch/img.height); // contain
+           var w=img.width*s, h=img.height*s; ctx.clearRect(0,0,cw,ch);
+           ctx.drawImage(img,(cw-w)/2,(ch-h)/2,w,h); }
+         for (var i=1;i<=FRAME_COUNT;i++){ var im=new Image();
+           im.onload=function(){ if(++loaded===1) fit(); }; im.src=PATH(i); images.push(im); }
+         addEventListener("resize", fit);
+         gsap.to(state,{ frame:FRAME_COUNT-1, ease:"none", onUpdate:render,
+           scrollTrigger:{ trigger:"#hero", start:"top top", end:"+=400%",
+             pin:true, scrub:1, invalidateOnRefresh:true }});
+       })();
+       <\/script>
+       ================================================================ -->
+
+</body>
+</html>
